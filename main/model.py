@@ -54,6 +54,12 @@ class Code2NaturalLanguage(object):
             else:
                 self.network.load_state_dict(state_dict)
 
+        self.preTraining = True
+
+    def change(self):
+        self.preTraining = False
+        self.network.preTraining = False
+   
     def init_optimizer(self, state_dict=None, use_gpu=True):
         """Initialize an optimizer for the free parameters of the network.
         Args:
@@ -172,26 +178,29 @@ class Code2NaturalLanguage(object):
                                 code_mask_rep=code_mask_rep,
                                 example_weights=ex_weights)
 
-        loss = net_loss['ml_loss'].mean() if self.parallel \
-            else net_loss['ml_loss']
-        loss_per_token = net_loss['loss_per_token'].mean() if self.parallel \
-            else net_loss['loss_per_token']
-        ml_loss = loss.item()
-        loss_per_token = loss_per_token.item()
-        loss_per_token = 10 if loss_per_token > 10 else loss_per_token
-        perplexity = math.exp(loss_per_token)
+        if not self.preTraining:
+            loss = net_loss['ml_loss'].mean() if self.parallel \
+                else net_loss['ml_loss']
+            loss_per_token = net_loss['loss_per_token'].mean() if self.parallel \
+                else net_loss['loss_per_token']
+            ml_loss = loss.item()
+            loss_per_token = loss_per_token.item()
+            loss_per_token = 10 if loss_per_token > 10 else loss_per_token
+            perplexity = math.exp(loss_per_token)
 
-        loss.backward()
+            loss.backward()
 
-        clip_grad_norm_(self.network.parameters(), self.args.grad_clipping)
-        self.optimizer.step()
-        self.optimizer.zero_grad()
+            clip_grad_norm_(self.network.parameters(), self.args.grad_clipping)
+            self.optimizer.step()
+            self.optimizer.zero_grad()
 
-        self.updates += 1
-        return {
-            'ml_loss': ml_loss,
-            'perplexity': perplexity
-        }
+            self.updates += 1
+            return {
+                'ml_loss': ml_loss,
+                'perplexity': perplexity
+            }
+        else:
+            return net_loss
 
     # --------------------------------------------------------------------------
     # Prediction
