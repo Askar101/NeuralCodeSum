@@ -561,12 +561,12 @@ def main(args):
             # Set up optimizer
             model.init_optimizer()
             # log the parameter details
-            logger.info('Trainable #parameters [encoder-decoder] {} [total] {}'.format(
-                human_format(model.network.count_encoder_parameters() +
-                             model.network.count_decoder_parameters()),
-                human_format(model.network.count_parameters())))
-            table = model.network.layer_wise_parameters()
-            logger.info('Breakdown of the trainable paramters\n%s' % table)
+#             logger.info('Trainable #parameters [encoder-decoder] {} [total] {}'.format(
+#                 human_format(model.network.count_encoder_parameters() +
+#                              model.network.count_decoder_parameters()),
+#                 human_format(model.network.count_parameters())))
+#             table = model.network.layer_wise_parameters()
+#             logger.info('Breakdown of the trainable paramters\n%s' % table)
 
     # Use the GPU?
     if args.cuda:
@@ -580,7 +580,65 @@ def main(args):
     # Two datasets: train and dev. If we sort by length it's faster.
     logger.info('-' * 100)
     logger.info('Make data loaders')
+    
+    # OK!
+    print("预训练开始")
+    from torch.utils.tensorboard import SummaryWriter
+    preTrainLoader = torch.utils.data.DataLoader(
+        train_dataset,
+        batch_size=256,
+        sampler=train_sampler,
+        num_workers=args.data_workers,
+        collate_fn=vector.batchify,
+        pin_memory=args.cuda,
+        drop_last=True
+    )
+    writer = SummaryWriter("runs")
+    c2s_loss_meter = AverageMeter()
+    s2c_loss_meter = AverageMeter()
+    total_loss_meter = AverageMeter()
 
+    for epoch in range(1, 101):
+        pbar = tqdm(preTrainLoader)
+        pbar.set_description(f"epoch: {epoch}")
+        if epoch > 50:
+            model.network.optimizerAdam.param_groups[0]['lr'] *= 0.99
+        for i, ex in enumerate(pbar, start=1):
+            c2s_loss, s2c_loss, total_loss = model.update(ex)
+
+            c2s_loss_meter.update(c2s_loss.item())
+            s2c_loss_meter.update(s2c_loss.item())
+            total_loss_meter.update(total_loss.item())
+
+            if i % 10 == 0:
+                writer.add_scalars("loss", {"c2s": c2s_loss_meter.avg,
+                                            "s2c": s2c_loss_meter.avg,
+                                            "total": total_loss_meter.avg},
+                                   i + (epoch - 1) * len(preTrainLoader))
+
+                print(f"c2s:{round(c2s_loss_meter.avg, 3)} "
+                      f"s2c:{round(s2c_loss_meter.avg, 3)} "
+                      f"total:{round(total_loss_meter.avg, 3)}")
+
+                c2s_loss_meter.reset()
+                s2c_loss_meter.reset()
+                total_loss_meter.reset()
+
+    params = {
+        'model': model.network.Modules.state_dict(),
+        'optimizer': model.network.optimizerAdam.state_dict()
+    }
+
+    torch.save(params, 'pretrain.pth')
+
+#     print("成功load")
+#     saved_params = torch.load('pretrain.pth')
+#     model.network.Modules.load_state_dict(saved_params['model'])
+#     model.network.optimizerAdam.load_state_dict(saved_params['optimizer'])
+
+    model.change()
+    
+    
     if not args.only_test:
         train_dataset = data.CommentDataset(train_exs, model)
         if args.sort_by_len:
