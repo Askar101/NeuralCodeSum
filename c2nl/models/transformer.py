@@ -13,7 +13,7 @@ from c2nl.modules.global_attention import GlobalAttention
 from c2nl.modules.copy_generator import CopyGenerator, CopyGeneratorCriterion
 from c2nl.utils.misc import sequence_mask
 
-
+from c2nl.encoders.summ_encoder import SummaryEncoder
 class Embedder(nn.Module):
     def __init__(self, args):
         super(Embedder, self).__init__()
@@ -329,7 +329,17 @@ class Transformer(nn.Module):
                                                     force_copy=args.force_copy)
         else:
             self.criterion = nn.CrossEntropyLoss(reduction='none')
+        # All for preTraining
 
+        self.summary_encoder = SummaryEncoder(args.tgt_vocab_size, project=True, pad_id=0)
+
+        self.project_layer_code = nn.Sequential(nn.Linear(512, 512), nn.ReLU(), nn.Linear(512, 512))
+
+        self.Modules = nn.ModuleList([self.embedder, self.encoder,  self.project_layer_code, self.summary_encoder])
+
+        self.optimizerAdam = torch.optim.Adam(self.Modules.parameters(), lr=0.0001)
+
+        self.preTraining = True
     def _run_forward_ml(self,
                         code_word_rep,
                         code_char_rep,
@@ -421,6 +431,34 @@ class Transformer(nn.Module):
         Output:
             - ``(batch_size, P_LEN)``, ``(batch_size, P_LEN)``
         """
+        
+        if self.preTraining:
+            code_rep = self.embedder(code_word_rep,
+                                     code_char_rep,
+                                     code_type_rep,
+                                     mode='encoder')
+            code, _ = self.encoder(code_rep, code_len)  # B x seq_len x h
+            code = self.project_layer_code(code.mean(dim=1))
+
+            summary = self.summary_encoder(summ_word_rep)
+
+            q = f.normalize(code, dim=1)
+            k = f.normalize(summary, dim=1)
+
+            logits_qk = torch.matmul(q, k.transpose(0, 1)) / 0.02
+            logits_kq = torch.matmul(k, q.transpose(0, 1)) / 0.1
+
+            labels = torch.arange(logits_qk.shape[0], dtype=torch.long).cuda()
+
+            c2s_loss = f.cross_entropy(logits_qk, labels)
+            s2c_loss = f.cross_entropy(logits_kq, labels)
+            total_loss = 0.5*c2s_loss + 0.5*s2c_loss
+
+            self.optimizerAdam.zero_grad()
+            total_loss.backward()
+            self.optimizerAdam.step()
+            return c2s_loss, s2c_loss, total_loss
+
         if self.training:
             return self._run_forward_ml(code_word_rep,
                                         code_char_rep,
