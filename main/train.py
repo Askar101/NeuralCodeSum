@@ -581,6 +581,44 @@ def main(args):
     logger.info('-' * 100)
     logger.info('Make data loaders')
     
+    if not args.only_test:
+        train_dataset = data.CommentDataset(train_exs, model)
+        if args.sort_by_len:
+            train_sampler = data.SortedBatchSampler(train_dataset.lengths(),
+                                                    args.batch_size,
+                                                    shuffle=True)
+        else:
+            train_sampler = torch.utils.data.sampler.RandomSampler(train_dataset)
+
+        train_loader = torch.utils.data.DataLoader(
+            train_dataset,
+            batch_size=args.batch_size,
+            sampler=train_sampler,
+            num_workers=args.data_workers,
+            collate_fn=vector.batchify,
+            pin_memory=args.cuda,
+            drop_last=args.parallel
+        )
+
+    dev_dataset = data.CommentDataset(dev_exs, model)
+    dev_sampler = torch.utils.data.sampler.SequentialSampler(dev_dataset)
+
+    dev_loader = torch.utils.data.DataLoader(
+        dev_dataset,
+        batch_size=args.test_batch_size,
+        sampler=dev_sampler,
+        num_workers=args.data_workers,
+        collate_fn=vector.batchify,
+        pin_memory=args.cuda,
+        drop_last=args.parallel
+    )
+
+    # -------------------------------------------------------------------------
+    # PRINT CONFIG
+    logger.info('-' * 100)
+    logger.info('CONFIG:\n%s' %
+                json.dumps(vars(args), indent=4, sort_keys=True))
+    
     # OK!
     print("预训练开始")
     from torch.utils.tensorboard import SummaryWriter
@@ -637,45 +675,6 @@ def main(args):
 #     model.network.optimizerAdam.load_state_dict(saved_params['optimizer'])
 
     model.change()
-    
-    
-    if not args.only_test:
-        train_dataset = data.CommentDataset(train_exs, model)
-        if args.sort_by_len:
-            train_sampler = data.SortedBatchSampler(train_dataset.lengths(),
-                                                    args.batch_size,
-                                                    shuffle=True)
-        else:
-            train_sampler = torch.utils.data.sampler.RandomSampler(train_dataset)
-
-        train_loader = torch.utils.data.DataLoader(
-            train_dataset,
-            batch_size=args.batch_size,
-            sampler=train_sampler,
-            num_workers=args.data_workers,
-            collate_fn=vector.batchify,
-            pin_memory=args.cuda,
-            drop_last=args.parallel
-        )
-
-    dev_dataset = data.CommentDataset(dev_exs, model)
-    dev_sampler = torch.utils.data.sampler.SequentialSampler(dev_dataset)
-
-    dev_loader = torch.utils.data.DataLoader(
-        dev_dataset,
-        batch_size=args.test_batch_size,
-        sampler=dev_sampler,
-        num_workers=args.data_workers,
-        collate_fn=vector.batchify,
-        pin_memory=args.cuda,
-        drop_last=args.parallel
-    )
-
-    # -------------------------------------------------------------------------
-    # PRINT CONFIG
-    logger.info('-' * 100)
-    logger.info('CONFIG:\n%s' %
-                json.dumps(vars(args), indent=4, sort_keys=True))
 
     # --------------------------------------------------------------------------
     # DO TEST
